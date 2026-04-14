@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: playwright-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -38,3 +42,12 @@ jobs:
       with:
         name: pytest-results
         path: pytest-results.xml
+        if-no-files-found: ignore
+
+    - name: Upload Playwright artifacts (trace/screenshot/DOM)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-artifacts
+        path: artifacts
+        if-no-files-found: ignore

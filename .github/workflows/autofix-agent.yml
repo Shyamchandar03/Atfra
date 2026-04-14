@@ -10,9 +10,18 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: autofix-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
 jobs:
   autofix:
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    # Prevent recursion: the agent dispatches Playwright runs on `autofix/*` branches for validation.
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'failure' &&
+        !startsWith(github.event.workflow_run.head_branch, 'autofix/')
+      }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout failing commit

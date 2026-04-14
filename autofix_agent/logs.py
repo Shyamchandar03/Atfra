@@ -21,6 +21,7 @@ class ParsedFailure:
 _NODEID_RE = re.compile(r"^(FAILED|ERROR)\s+([^\s]+)\s+-", re.MULTILINE)
 _PYTEST_FILE_LINE_RE = re.compile(r"^(?P<file>[^:\n]+\.py):(?P<line>\d+):", re.MULTILINE)
 _EXC_LINE_RE = re.compile(r"^(?P<type>[A-Za-z_][\w.]*)(?::\s+(?P<msg>.*))?$", re.MULTILINE)
+_SELECTOR_HINT_RE = re.compile(r"(?:selector|Locator)\s+([\"'][^\"']+[\"'])", re.IGNORECASE)
 
 
 def extract_text_logs(zip_bytes: bytes, out_dir: str) -> list[str]:
@@ -96,6 +97,13 @@ def parse_first_failure(texts: list[str], max_excerpt_chars: int = 16000) -> Par
         exception_type=exception_type,
         exception_message=exception_message,
     )
+
+
+def extract_selector_hint(text: str) -> str | None:
+    m = _SELECTOR_HINT_RE.search(text)
+    if not m:
+        return None
+    return m.group(1)
 
 
 def parse_pytest_junit(xml_text: str) -> ParsedFailure:

@@ -14,7 +14,13 @@ from .failure import classify_failure
 from .github import GitHubClient, GitHubError, WorkflowRunRef
 from .llm.gemini import generate_json
 from .llm.prompts import LlmFixPlan, PromptInputs, build_fix_prompt
-from .logs import extract_text_logs, parse_failure_from_artifact_zip, parse_first_failure
+from .logs import (
+    extract_selector_hint,
+    extract_text_logs,
+    parse_failure_from_artifact_zip,
+    parse_first_failure,
+)
+from .artifacts import extract_playwright_artifact_context
 from .memory import FixRecord, MemoryStore, utc_now_iso
 from .notify import NoopNotifier, SlackNotifier
 from .patching import apply_llm_edits
@@ -107,12 +113,26 @@ def run_from_github_event(event_path: str) -> AutofixResult:
             classification = classify_failure(parsed)
             context = gather_code_context(parsed)
 
+            artifact_context = None
+            try:
+                artifacts = gh.list_run_artifacts(run_id)
+                pw = next((a for a in artifacts if a.get("name") == "playwright-artifacts"), None)
+                if pw and not pw.get("expired", False):
+                    pw_zip = gh.download_artifact_zip(int(pw["id"]))
+                    selector_hint = extract_selector_hint(parsed.raw_excerpt)
+                    artifact_context = extract_playwright_artifact_context(
+                        pw_zip, selector_hint=selector_hint
+                    )
+            except Exception:
+                artifact_context = None
+
         prompt = build_fix_prompt(
             PromptInputs(
                 repo=cfg.repository,
                 failure_excerpt=parsed.raw_excerpt,
                 classification=asdict(classification),
                 code_context={"files": context.files},
+                artifact_context=artifact_context,
             )
         )
 
