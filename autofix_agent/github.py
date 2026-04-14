@@ -8,7 +8,12 @@ import requests
 
 
 class GitHubError(RuntimeError):
-    pass
+    def __init__(self, status_code: int, method: str, path: str, body: str):
+        self.status_code = status_code
+        self.method = method
+        self.path = path
+        self.body = body
+        super().__init__(f"GitHub API error {status_code} for {method} {path}: {body[:2000]}")
 
 
 @dataclass(frozen=True)
@@ -48,9 +53,7 @@ class GitHubClient:
             **kwargs,
         )
         if resp.status_code >= 400:
-            raise GitHubError(
-                f"GitHub API error {resp.status_code} for {method} {path}: {resp.text[:2000]}"
-            )
+            raise GitHubError(resp.status_code, method, path, resp.text)
         return resp
 
     def get_workflow_run(self, run_id: int) -> WorkflowRunRef:
@@ -63,7 +66,30 @@ class GitHubClient:
         )
 
     def download_workflow_logs_zip(self, run_id: int) -> bytes:
-        resp = self._request("GET", f"/repos/{self._repo}/actions/runs/{run_id}/logs")
+        delay_s = 3
+        for attempt in range(1, 7):
+            try:
+                resp = self._request("GET", f"/repos/{self._repo}/actions/runs/{run_id}/logs")
+                return resp.content
+            except GitHubError as e:
+                # GitHub can transiently fail to generate the signed download URL for logs.
+                if 500 <= e.status_code < 600 and attempt < 7:
+                    time.sleep(delay_s)
+                    delay_s = min(delay_s * 2, 30)
+                    continue
+                raise
+
+        raise GitHubError(500, "GET", f"/repos/{self._repo}/actions/runs/{run_id}/logs", "Retries exhausted.")
+
+    def list_run_artifacts(self, run_id: int) -> list[dict[str, Any]]:
+        data = self._request("GET", f"/repos/{self._repo}/actions/runs/{run_id}/artifacts").json()
+        return list(data.get("artifacts", []))
+
+    def download_artifact_zip(self, artifact_id: int) -> bytes:
+        # archive_format must be "zip"
+        resp = self._request(
+            "GET", f"/repos/{self._repo}/actions/artifacts/{artifact_id}/zip", timeout=120
+        )
         return resp.content
 
     def rerun_workflow(self, run_id: int) -> None:
@@ -202,4 +228,3 @@ class GitHubClient:
 
     def get_workflow_run_url(self, run_id: int) -> str:
         return f"https://github.com/{self._repo}/actions/runs/{run_id}"
-

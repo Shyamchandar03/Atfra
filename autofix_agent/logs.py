@@ -5,6 +5,7 @@ import os
 import re
 import zipfile
 from dataclasses import dataclass
+import xml.etree.ElementTree as ET
 
 
 @dataclass(frozen=True)
@@ -95,3 +96,88 @@ def parse_first_failure(texts: list[str], max_excerpt_chars: int = 16000) -> Par
         exception_type=exception_type,
         exception_message=exception_message,
     )
+
+
+def parse_pytest_junit(xml_text: str) -> ParsedFailure:
+    """
+    Fallback when GitHub log download is unavailable:
+    parse the uploaded `--junitxml` report to get the first failing test + message.
+    """
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return ParsedFailure(
+            raw_excerpt=xml_text[:16000],
+            failed_test_nodeid=None,
+            failed_file=None,
+            failed_line=None,
+            exception_type=None,
+            exception_message=None,
+        )
+
+    # JUnit structure from pytest: testsuite -> testcase -> (failure|error|skipped)
+    testcase = None
+    outcome = None
+    for tc in root.iter("testcase"):
+        failure = next(iter(tc.findall("failure")), None)
+        error = next(iter(tc.findall("error")), None)
+        if failure is not None:
+            testcase = tc
+            outcome = failure
+            break
+        if error is not None:
+            testcase = tc
+            outcome = error
+            break
+
+    if testcase is None or outcome is None:
+        return ParsedFailure(
+            raw_excerpt=xml_text[:16000],
+            failed_test_nodeid=None,
+            failed_file=None,
+            failed_line=None,
+            exception_type=None,
+            exception_message=None,
+        )
+
+    classname = testcase.attrib.get("classname")
+    name = testcase.attrib.get("name")
+    nodeid = "::".join([p for p in [classname, name] if p]) or None
+
+    exc_type = outcome.attrib.get("type")
+    msg = outcome.attrib.get("message")
+    text = (outcome.text or "").strip()
+    excerpt = "\n".join([p for p in [msg, text] if p])[:16000]
+
+    file_line_match = _PYTEST_FILE_LINE_RE.search(excerpt)
+    failed_file = file_line_match.group("file") if file_line_match else None
+    failed_line = int(file_line_match.group("line")) if file_line_match else None
+
+    return ParsedFailure(
+        raw_excerpt=excerpt or xml_text[:16000],
+        failed_test_nodeid=nodeid,
+        failed_file=failed_file,
+        failed_line=failed_line,
+        exception_type=exc_type,
+        exception_message=msg,
+    )
+
+
+def parse_failure_from_artifact_zip(zip_bytes: bytes, junit_filename: str = "pytest-results.xml") -> ParsedFailure:
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        candidates = [n for n in zf.namelist() if n.endswith(junit_filename)]
+        if not candidates:
+            # fall back to any xml
+            candidates = [n for n in zf.namelist() if n.lower().endswith(".xml")]
+        if not candidates:
+            return ParsedFailure(
+                raw_excerpt="Artifact zip did not contain a junit xml report.",
+                failed_test_nodeid=None,
+                failed_file=None,
+                failed_line=None,
+                exception_type=None,
+                exception_message=None,
+            )
+        with zf.open(candidates[0]) as f:
+            xml_text = f.read().decode("utf-8", errors="replace")
+    return parse_pytest_junit(xml_text)

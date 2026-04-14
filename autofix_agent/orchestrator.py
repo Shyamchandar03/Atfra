@@ -11,10 +11,10 @@ from dotenv import load_dotenv
 from .config import AgentConfig
 from .context import gather_code_context
 from .failure import classify_failure
-from .github import GitHubClient, WorkflowRunRef
+from .github import GitHubClient, GitHubError, WorkflowRunRef
 from .llm.gemini import generate_json
 from .llm.prompts import LlmFixPlan, PromptInputs, build_fix_prompt
-from .logs import extract_text_logs, parse_first_failure
+from .logs import extract_text_logs, parse_failure_from_artifact_zip, parse_first_failure
 from .memory import FixRecord, MemoryStore, utc_now_iso
 from .notify import NoopNotifier, SlackNotifier
 from .patching import apply_llm_edits
@@ -76,9 +76,34 @@ def run_from_github_event(event_path: str) -> AutofixResult:
         gh.create_or_reset_branch(branch, base_sha)
 
         with tempfile.TemporaryDirectory(prefix="autofix-logs-") as tmp:
-            zip_bytes = gh.download_workflow_logs_zip(run_id)
-            texts = extract_text_logs(zip_bytes, os.path.join(tmp, "logs"))
-            parsed = parse_first_failure(texts)
+            parsed = None
+            try:
+                zip_bytes = gh.download_workflow_logs_zip(run_id)
+                texts = extract_text_logs(zip_bytes, os.path.join(tmp, "logs"))
+                parsed = parse_first_failure(texts)
+            except GitHubError as e:
+                # Fallback: use junit artifact if log download is temporarily unavailable.
+                if 500 <= e.status_code < 600:
+                    artifacts = gh.list_run_artifacts(run_id)
+                    junit = next((a for a in artifacts if a.get("name") == "pytest-results"), None)
+                    if junit and not junit.get("expired", False):
+                        zip_bytes = gh.download_artifact_zip(int(junit["id"]))
+                        parsed = parse_failure_from_artifact_zip(zip_bytes)
+            if parsed is None:
+                memory.add(
+                    FixRecord(
+                        run_id=run_id,
+                        created_at=utc_now_iso(),
+                        category="unknown",
+                        confidence=0.0,
+                        summary="Unable to fetch logs/artifacts for failure analysis.",
+                        branch=branch,
+                        pr_url=None,
+                        outcome="skipped_logs_unavailable",
+                    )
+                )
+                return AutofixResult(run_id=run_id, outcome="skipped: logs unavailable", branch=branch)
+
             classification = classify_failure(parsed)
             context = gather_code_context(parsed)
 
@@ -194,4 +219,3 @@ def run_from_github_event(event_path: str) -> AutofixResult:
 
     notifier.send("Autofix failed", f"Exhausted {cfg.max_attempts} attempts for run {run_id}.")
     return AutofixResult(run_id=run_id, outcome="failed: max attempts reached")
-

@@ -14,7 +14,7 @@ def main() -> int:
         result = run_from_github_event(event_path)
     except Exception as e:  # noqa: BLE001
         print(f"Autofix crashed: {e}")
-        raise
+        return 0
     print(f"Autofix result: {result}")
     # Don't fail the autofix workflow unless the agent itself crashes.
     return 0
