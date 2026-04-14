@@ -67,7 +67,7 @@ class AgentConfig:
             playwright_workflow_file=_env("PLAYWRIGHT_WORKFLOW_FILE", "playwright.yml")
             or "playwright.yml",
             max_attempts=_env_int("AUTOFIX_MAX_ATTEMPTS", 3),
-            flaky_rerun_once=(_env("AUTOFIX_FLAKY_RERUN_ONCE", "true") or "true")
+            flaky_rerun_once=(_env("AUTOFIX_FLAKY_RERUN_ONCE", "false") or "false")
             .lower()
             .strip()
             in {"1", "true", "yes", "y"},

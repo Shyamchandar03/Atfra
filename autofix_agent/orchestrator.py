@@ -73,12 +73,9 @@ def run_from_github_event(event_path: str) -> AutofixResult:
 
     Path(".autofix").mkdir(parents=True, exist_ok=True)
 
-    # Optional flaky signal: rerun once without changes. If it passes, treat as flaky/infrastructure.
-    if cfg.flaky_rerun_once:
-        try:
-            gh.rerun_workflow(run_id)
-        except Exception:
-            pass
+    # Note: we intentionally do NOT rerun the original failed workflow run here.
+    # Rerunning it can re-trigger `workflow_run` and cause duplicate agent executions/PRs.
+    # Flakiness should be handled via the validation loop on the autofix branch.
 
     for attempt in range(1, cfg.max_attempts + 1):
         # IMPORTANT: never reuse a branch name across separate Autofix workflow executions.

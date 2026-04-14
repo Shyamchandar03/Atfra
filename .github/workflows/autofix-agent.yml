@@ -20,6 +20,8 @@ jobs:
     if: >-
       ${{
         github.event.workflow_run.conclusion == 'failure' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == github.event.repository.default_branch &&
         !startsWith(github.event.workflow_run.head_branch, 'autofix/')
       }}
     runs-on: ubuntu-latest
@@ -48,7 +50,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PLAYWRIGHT_WORKFLOW_FILE: playwright.yml
           AUTOFIX_MAX_ATTEMPTS: "3"
-          AUTOFIX_FLAKY_RERUN_ONCE: "true"
+          AUTOFIX_FLAKY_RERUN_ONCE: "false"
         run: |
           python -m scripts.autofix_run
 
