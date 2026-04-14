@@ -10,11 +10,15 @@ def main() -> int:
     if not event_path:
         print("Missing GITHUB_EVENT_PATH.")
         return 2
-    result = run_from_github_event(event_path)
+    try:
+        result = run_from_github_event(event_path)
+    except Exception as e:  # noqa: BLE001
+        print(f"Autofix crashed: {e}")
+        raise
     print(f"Autofix result: {result}")
-    return 0 if result.outcome == "success" else 1
+    # Don't fail the autofix workflow unless the agent itself crashes.
+    return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

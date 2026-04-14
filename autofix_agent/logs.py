@@ -42,7 +42,26 @@ def extract_text_logs(zip_bytes: bytes, out_dir: str) -> list[str]:
 
 def parse_first_failure(texts: list[str], max_excerpt_chars: int = 16000) -> ParsedFailure:
     joined = "\n\n".join(texts)
-    excerpt = joined[-max_excerpt_chars:] if len(joined) > max_excerpt_chars else joined
+    # Prefer an excerpt centered on pytest failure markers, not just the tail (which is often installs).
+    markers = [
+        "============================= FAILURES =============================",
+        "=========================== short test summary info ===========================",
+        "Traceback (most recent call last):",
+        "E   ",
+        "\nFAILED ",
+        "\nERROR ",
+    ]
+    idx = -1
+    for m in markers:
+        idx = joined.find(m)
+        if idx != -1:
+            break
+    if idx == -1:
+        excerpt = joined[-max_excerpt_chars:] if len(joined) > max_excerpt_chars else joined
+    else:
+        start = max(0, idx - 4000)
+        end = min(len(joined), idx + max_excerpt_chars)
+        excerpt = joined[start:end]
 
     nodeid_match = _NODEID_RE.search(joined)
     nodeid = nodeid_match.group(2) if nodeid_match else None
@@ -53,15 +72,19 @@ def parse_first_failure(texts: list[str], max_excerpt_chars: int = 16000) -> Par
 
     exception_type = None
     exception_message = None
-    tail = joined[-8000:]
-    for line in reversed(tail.splitlines()):
-        line = line.strip()
-        if not line or line.startswith(("E   ", ">", "================", "FAILED", "ERROR")):
-            continue
-        m = _EXC_LINE_RE.match(line)
-        if m and (m.group("type") or "").lower().endswith(("error", "exception", "assertionerror")):
-            exception_type = m.group("type")
-            exception_message = (m.group("msg") or "").strip() or None
+    # Extract exception from excerpt window first, then fall back to tail.
+    search_windows = [excerpt, joined[-8000:]]
+    for window in search_windows:
+        for line in reversed(window.splitlines()):
+            line = line.strip()
+            if not line or line.startswith(("E   ", ">", "================", "FAILED", "ERROR")):
+                continue
+            m = _EXC_LINE_RE.match(line)
+            if m and (m.group("type") or "").lower().endswith(("error", "exception", "assertionerror")):
+                exception_type = m.group("type")
+                exception_message = (m.group("msg") or "").strip() or None
+                break
+        if exception_type:
             break
 
     return ParsedFailure(
@@ -72,4 +95,3 @@ def parse_first_failure(texts: list[str], max_excerpt_chars: int = 16000) -> Par
         exception_type=exception_type,
         exception_message=exception_message,
     )
-
