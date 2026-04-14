@@ -42,6 +42,9 @@ jobs:
       - name: Run Autofix Agent
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: Personal Access Token / Fine-grained token for PR creation (workaround for repo setting).
+          # Create this secret if you don't want to enable "Allow GitHub Actions to create and approve pull requests".
+          GITHUB_PR_TOKEN: ${{ secrets.AUTOFIX_GH_PAT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PLAYWRIGHT_WORKFLOW_FILE: playwright.yml
           AUTOFIX_MAX_ATTEMPTS: "3"

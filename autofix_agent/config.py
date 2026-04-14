@@ -24,6 +24,7 @@ def _env_int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class AgentConfig:
     github_token: str
+    github_pr_token: str | None
     repository: str  # owner/repo
     default_branch: str
 
@@ -43,6 +44,11 @@ class AgentConfig:
         if not github_token:
             raise RuntimeError("Missing GITHUB_TOKEN (or GH_TOKEN).")
 
+        # Optional: use a separate token for PR creation (PAT / fine-grained token).
+        # Useful when the repo setting "GitHub Actions is permitted to create or approve pull requests"
+        # is disabled for the default GITHUB_TOKEN.
+        github_pr_token = _env("GITHUB_PR_TOKEN")
+
         repository = _env("GITHUB_REPOSITORY")
         if not repository:
             raise RuntimeError("Missing GITHUB_REPOSITORY (owner/repo).")
@@ -53,6 +59,7 @@ class AgentConfig:
 
         return AgentConfig(
             github_token=github_token,
+            github_pr_token=github_pr_token,
             repository=repository,
             default_branch=_env("DEFAULT_BRANCH", "main") or "main",
             gemini_api_key=gemini_api_key,
@@ -66,4 +73,3 @@ class AgentConfig:
             in {"1", "true", "yes", "y"},
             slack_webhook_url=_env("SLACK_WEBHOOK_URL"),
         )
-

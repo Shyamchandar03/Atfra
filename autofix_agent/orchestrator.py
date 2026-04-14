@@ -55,6 +55,7 @@ def run_from_github_event(event_path: str) -> AutofixResult:
     load_dotenv(override=False)
     cfg = AgentConfig.from_env()
     gh = GitHubClient(token=cfg.github_token, repository=cfg.repository)
+    gh_pr = GitHubClient(token=(cfg.github_pr_token or cfg.github_token), repository=cfg.repository)
     memory = MemoryStore()
     notifier = _pick_notifier(cfg)
 
@@ -223,13 +224,25 @@ def run_from_github_event(event_path: str) -> AutofixResult:
                 f"Validation run: {gh.get_workflow_run_url(final.run_id)}\n"
                 f"Original failing run: {gh.get_workflow_run_url(run_id)}\n"
             )
-            pr_url = gh.create_pull_request(
-                title=f"Autofix: {plan.summary}",
-                body=pr_body,
-                head=branch,
-                base=cfg.default_branch,
-                draft=False,
-            )
+            pr_url: str | None = None
+            try:
+                pr_url = gh_pr.create_pull_request(
+                    title=f"Autofix: {plan.summary}",
+                    body=pr_body,
+                    head=branch,
+                    base=cfg.default_branch,
+                    draft=False,
+                )
+            except GitHubError as e:
+                # Common repo setting blocks PR creation with GITHUB_TOKEN.
+                if e.status_code == 403:
+                    print(
+                        "[autofix] PR creation forbidden for this token. "
+                        "Enable 'Allow GitHub Actions to create and approve pull requests' "
+                        "or provide GITHUB_PR_TOKEN."
+                    )
+                else:
+                    raise
             memory.add(
                 FixRecord(
                     run_id=run_id,
@@ -239,13 +252,16 @@ def run_from_github_event(event_path: str) -> AutofixResult:
                     summary=plan.summary,
                     branch=branch,
                     pr_url=pr_url,
-                    outcome="pr_created",
+                    outcome="pr_created" if pr_url else "success_no_pr_permission",
                 )
             )
-            notifier.send("Autofix succeeded", f"PR created: {pr_url}")
+            if pr_url:
+                notifier.send("Autofix succeeded", f"PR created: {pr_url}")
+            else:
+                notifier.send("Autofix succeeded", f"Fix validated on branch: {branch} (PR not created)")
             return AutofixResult(
                 run_id=run_id,
-                outcome="success",
+                outcome="success" if pr_url else "success_no_pr_permission",
                 branch=branch,
                 pr_url=pr_url,
                 summary=plan.summary,
