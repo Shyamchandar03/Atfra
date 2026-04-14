@@ -81,9 +81,20 @@ def run_from_github_event(event_path: str) -> AutofixResult:
             pass
 
     for attempt in range(1, cfg.max_attempts + 1):
-        branch = f"autofix/run-{run_id}-a{attempt}"
+        # IMPORTANT: never reuse a branch name across separate Autofix workflow executions.
+        # Reusing + force-resetting can erase the fix commit from an already-open PR (showing 0 commits).
+        agent_run_id = os.getenv("GITHUB_RUN_ID") or os.getenv("GITHUB_RUN_NUMBER") or "local"
+        base_branch = f"autofix/run-{run_id}-agent-{agent_run_id}-a{attempt}"
         base_sha = run_ref.head_sha
-        gh.create_or_reset_branch(branch, base_sha)
+        # Ensure branch name is unique even if rerun with the same agent_run_id.
+        branch = base_branch
+        if gh.try_get_ref_sha(branch) is not None:
+            for i in range(2, 50):
+                candidate = f"{base_branch}-r{i}"
+                if gh.try_get_ref_sha(candidate) is None:
+                    branch = candidate
+                    break
+        gh.create_branch(branch, base_sha)
 
         with tempfile.TemporaryDirectory(prefix="autofix-logs-") as tmp:
             parsed = None
@@ -194,11 +205,12 @@ def run_from_github_event(event_path: str) -> AutofixResult:
             with open(path, "r", encoding="utf-8") as f:
                 files_payload[path] = f.read()
 
-        gh.commit_files_to_branch(
+        commit_sha = gh.commit_files_to_branch(
             branch=branch,
             message=f"Autofix attempt {attempt}: {plan.summary}",
             files=files_payload,
         )
+        print(f"[autofix] committed {commit_sha} to {branch}")
 
         gh.dispatch_workflow(cfg.playwright_workflow_file, ref=branch)
         workflow_id = gh.get_workflow_id(cfg.playwright_workflow_file)
@@ -214,6 +226,41 @@ def run_from_github_event(event_path: str) -> AutofixResult:
 
         final = gh.wait_for_run_completion(dispatched_run.run_id, timeout_s=2400, poll_s=10)
         if final.conclusion == "success":
+            # Avoid creating empty PRs (common if main already contains the same fix by the time PR is opened).
+            try:
+                cmp = gh.compare(cfg.default_branch, branch)
+                ahead_by = int(cmp.get("ahead_by", 0) or 0)
+                files = cmp.get("files") or []
+                if ahead_by == 0 or len(files) == 0:
+                    memory.add(
+                        FixRecord(
+                            run_id=run_id,
+                            created_at=utc_now_iso(),
+                            category=plan.category,
+                            confidence=float(plan.confidence),
+                            summary=plan.summary,
+                            branch=branch,
+                            pr_url=None,
+                            outcome="success_no_diff_against_base",
+                        )
+                    )
+                    print(
+                        f"[autofix] skip PR: branch {branch} has no diff vs {cfg.default_branch}"
+                    )
+                    notifier.send(
+                        "Autofix succeeded",
+                        f"Fix validated on branch: {branch} (no diff vs {cfg.default_branch})",
+                    )
+                    return AutofixResult(
+                        run_id=run_id,
+                        outcome="success_no_diff_against_base",
+                        branch=branch,
+                        pr_url=None,
+                        summary=plan.summary,
+                    )
+            except Exception:
+                pass
+
             pr_body = (
                 f"Root cause (agent): {plan.summary}\n\n"
                 f"Category: {plan.category}\n"
@@ -221,6 +268,7 @@ def run_from_github_event(event_path: str) -> AutofixResult:
                 "Applied edits:\n"
                 + "\n".join(f"- `{a.file_path}`: {a.reason}" for a in applied)
                 + "\n\n"
+                f"Fix commit: {commit_sha}\n"
                 f"Validation run: {gh.get_workflow_run_url(final.run_id)}\n"
                 f"Original failing run: {gh.get_workflow_run_url(run_id)}\n"
             )

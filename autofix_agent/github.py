@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -149,6 +150,14 @@ class GitHubClient:
         data = self._request("GET", f"/repos/{self._repo}/git/ref/heads/{branch}").json()
         return str(data["object"]["sha"])
 
+    def try_get_ref_sha(self, branch: str) -> str | None:
+        try:
+            return self.get_ref_sha(branch)
+        except GitHubError as e:
+            if e.status_code == 404:
+                return None
+            raise
+
     def create_branch(self, branch: str, from_sha: str) -> None:
         self._request(
             "POST",
@@ -228,3 +237,14 @@ class GitHubClient:
 
     def get_workflow_run_url(self, run_id: int) -> str:
         return f"https://github.com/{self._repo}/actions/runs/{run_id}"
+
+    def compare(self, base: str, head: str) -> dict[str, Any]:
+        """
+        Returns GitHub compare payload for base...head.
+        base/head can include slashes; encode defensively.
+        """
+        base_q = quote(base, safe="")
+        head_q = quote(head, safe="")
+        return self._request(
+            "GET", f"/repos/{self._repo}/compare/{base_q}...{head_q}", timeout=60
+        ).json()
