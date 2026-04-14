@@ -4,6 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -29,4 +30,11 @@ jobs:
 
     - name: Run tests
       run: |
-        pytest tests/test.py --maxfail=1 --disable-warnings -v
+        pytest tests/test.py --maxfail=1 --disable-warnings -v --junitxml=pytest-results.xml
+
+    - name: Upload pytest report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pytest-results
+        path: pytest-results.xml

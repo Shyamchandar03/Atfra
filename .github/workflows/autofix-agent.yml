@@ -1,0 +1,41 @@
+name: Autofix Agent (Playwright)
+
+on:
+  workflow_run:
+    workflows: ["Playwright Tests"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  autofix:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout failing commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install agent dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-agent.txt
+
+      - name: Run Autofix Agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PLAYWRIGHT_WORKFLOW_FILE: playwright.yml
+          AUTOFIX_MAX_ATTEMPTS: "3"
+          AUTOFIX_FLAKY_RERUN_ONCE: "true"
+        run: |
+          python -m scripts.autofix_run
