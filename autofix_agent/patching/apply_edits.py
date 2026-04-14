@@ -13,14 +13,20 @@ class AppliedEdit:
 
 def apply_llm_edits(edits: list[dict], repo_root: str = ".") -> list[AppliedEdit]:
     results: list[AppliedEdit] = []
-    root_norm = os.path.normpath(repo_root)
+    root_abs = os.path.abspath(repo_root)
+    root_abs_norm = os.path.normcase(os.path.normpath(root_abs))
     for e in edits:
         file_path = e["file_path"]
         anchor = e["anchor"]
         replacement = e["replacement"]
 
-        abs_path = os.path.normpath(os.path.join(repo_root, file_path))
-        if not abs_path.startswith(root_norm):
+        abs_path = os.path.abspath(os.path.join(repo_root, file_path))
+        abs_path_norm = os.path.normcase(os.path.normpath(abs_path))
+        # Ensure abs_path is within repo_root (prevents path traversal).
+        if not (
+            abs_path_norm == root_abs_norm
+            or abs_path_norm.startswith(root_abs_norm + os.sep)
+        ):
             results.append(AppliedEdit(file_path, False, "Skipped: path traversal detected."))
             continue
         if not os.path.exists(abs_path):
@@ -47,4 +53,3 @@ def apply_llm_edits(edits: list[dict], repo_root: str = ".") -> list[AppliedEdit
 
         results.append(AppliedEdit(file_path, True, "Applied."))
     return results
-

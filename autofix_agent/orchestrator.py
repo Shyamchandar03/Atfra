@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -68,6 +69,8 @@ def run_from_github_event(event_path: str) -> AutofixResult:
         return AutofixResult(run_id=run_id, outcome=f"skipped: conclusion={run_ref.conclusion}")
 
     notifier.send("Autofix started", f"{cfg.repository} run {run_id} failed; attempting repair.")
+
+    Path(".autofix").mkdir(parents=True, exist_ok=True)
 
     # Optional flaky signal: rerun once without changes. If it passes, treat as flaky/infrastructure.
     if cfg.flaky_rerun_once:
@@ -144,7 +147,31 @@ def run_from_github_event(event_path: str) -> AutofixResult:
         )
         plan = LlmFixPlan.model_validate(fix_json)
 
+        # Persist plan + patch application results for debugging (uploaded as workflow artifact).
+        attempt_json_path = Path(".autofix") / f"attempt-{run_id}-a{attempt}.json"
+        with open(attempt_json_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "run_id": run_id,
+                    "attempt": attempt,
+                    "branch": branch,
+                    "classification": asdict(classification),
+                    "plan": plan.model_dump(),
+                    "artifact_context_present": artifact_context is not None,
+                },
+                f,
+                indent=2,
+            )
+
         applied = apply_llm_edits([e.model_dump() for e in plan.edits], repo_root=".")
+        applied_json_path = Path(".autofix") / f"applied-{run_id}-a{attempt}.json"
+        with open(applied_json_path, "w", encoding="utf-8") as f:
+            json.dump([asdict(a) for a in applied], f, indent=2)
+
+        print(f"[autofix] run={run_id} attempt={attempt} plan_summary={plan.summary!r}")
+        for a in applied:
+            print(f"[autofix] edit {a.file_path}: {a.reason}")
+
         changed_files = [a.file_path for a in applied if a.changed]
         if not changed_files:
             memory.add(

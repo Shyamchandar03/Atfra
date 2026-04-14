@@ -48,3 +48,11 @@ jobs:
           AUTOFIX_FLAKY_RERUN_ONCE: "true"
         run: |
           python -m scripts.autofix_run
+
+      - name: Upload Autofix debug logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autofix-debug
+          path: .autofix
+          if-no-files-found: ignore
